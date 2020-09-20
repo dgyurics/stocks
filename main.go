@@ -5,8 +5,14 @@ import (
 	"fmt"
 	"os"
 	"strconv"
+	"sync"
+	"time"
 	"unicode"
 )
+
+type amount struct {
+	dollar, cent int
+}
 
 func main() {
 	fmt.Println("Analyzing stocks...")
@@ -15,12 +21,12 @@ func main() {
 		fmt.Println("invalid input:", err)
 	}
 
-	dollar, cents, err := getTodayGainLoss(os.Args[1:])
+	amt, err := getTodayGainLoss(os.Args[1:])
 	if err != nil {
 		fmt.Println("could not retrieve stock information:", err)
 	}
 
-	if isGreenDay(dollar, cents) {
+	if isGreenDay(amt) {
 		fmt.Println("Your stocks are up!")
 	} else {
 		fmt.Println("Your stocks have seen better days")
@@ -53,14 +59,36 @@ func IsLetter(s string) bool {
 	return true
 }
 
-func isGreenDay(dollar, cents int) bool {
-	if dollar >= 0 && cents >= 0 {
+func isGreenDay(amt *amount) bool {
+	if amt.dollar >= 0 && amt.cent >= 0 {
 		return true
 	}
 	return false
 }
 
-func getTodayGainLoss(args[] string) (int, int, error) {
-	// use int for cents
-	return 0, 0, nil
+func getStock(ticker string, wg *sync.WaitGroup, c chan<- amount) {
+	defer wg.Done()
+	fmt.Println("checking price " + ticker)
+	time.Sleep(time.Second * 2)
+	c <- amount{10, 20}
+}
+
+func getTodayGainLoss(args[] string) (*amount, error) {
+	var wg sync.WaitGroup
+	prices := make(chan amount, len(args)/2)
+
+	for i := 0; i < len(args); i = i+2 {
+		wg.Add(1)
+		go getStock(args[i], &wg, prices)
+	}
+
+	wg.Wait()
+	close(prices)
+
+	runningTotal := amount{0, 0}
+	for amt := range prices {
+		runningTotal.dollar += amt.dollar
+		runningTotal.cent += amt.cent
+	}
+	return &runningTotal, nil
 }
