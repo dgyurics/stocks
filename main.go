@@ -1,12 +1,16 @@
 package main
 
 import (
+	"encoding/json"
 	"errors"
 	"fmt"
+	"io/ioutil"
+	"log"
+	"net/http"
 	"os"
 	"strconv"
+	"strings"
 	"sync"
-	"time"
 	"unicode"
 )
 
@@ -65,12 +69,51 @@ func isGreenDay(amt *amount) bool {
 	}
 	return false
 }
+type stock struct {
+	Country string `json:country`
+	Symbol string `json:symbol`
+	Price string `json:price`
+}
+type respBody struct {
+	Response []stock `json:response`
+}
 
 func getStock(ticker string, wg *sync.WaitGroup, c chan<- amount) {
 	defer wg.Done()
 	fmt.Println("checking price " + ticker)
-	time.Sleep(time.Second * 2)
-	c <- amount{10, 20}
+
+	// get stock price for the day
+	url := fmt.Sprintf("https://fcsapi.com/api-v2/stock/latest?symbol=%s&access_key=%s",ticker, "JWtSLcs045NL95a6GhHs6oYvt46dzbq3EBsPQXIiA8bLrBfUwC")
+	resp, err := http.Get(url)
+	if err != nil {
+		fmt.Println("Error reading stock", err)
+	}
+	defer resp.Body.Close()
+
+	body, err := ioutil.ReadAll(resp.Body)
+	respBody1 := respBody{}
+	jsonErr := json.Unmarshal(body, &respBody1)
+
+	if jsonErr != nil {
+		log.Fatal(jsonErr)
+		c <- amount{0, 0} // fixme
+	}
+
+	for _, st := range respBody1.Response {
+		if st.Country == "united-states" {
+			fmt.Println(st.Country)
+			fmt.Println(st.Symbol)
+			fmt.Println(st.Price)
+			amtArr := strings.Split(st.Price, ".")
+			dollar, err := strconv.Atoi(amtArr[0])
+			cent, err := strconv.Atoi(amtArr[1])
+			if err != nil {
+				log.Fatal(err)
+				c <- amount{0, 0} // fixme
+			}
+			c <- amount{dollar, cent}
+		}
+	}
 }
 
 func getTodayGainLoss(args[] string) (*amount, error) {
