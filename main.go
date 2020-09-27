@@ -19,22 +19,13 @@ type amount struct {
 }
 
 func main() {
-	fmt.Println("Analyzing stocks...")
+	log.Println("Analyzing stocks...")
 
 	if err := verifyArgs(os.Args[1:]); err != nil {
-		fmt.Println("invalid input:", err)
+		log.Println("invalid input:", err)
 	}
 
-	amt, err := getTodayGainLoss(os.Args[1:])
-	if err != nil {
-		fmt.Println("could not retrieve stock information:", err)
-	}
-
-	if isGreenDay(amt) {
-		fmt.Println("Your stocks are up!")
-	} else {
-		fmt.Println("Your stocks have seen better days")
-	}
+	printGrandTotal(os.Args[1:])
 }
 
 func verifyArgs(args[] string) error {
@@ -63,66 +54,65 @@ func IsLetter(s string) bool {
 	return true
 }
 
-func isGreenDay(amt *amount) bool {
-	if amt.dollar >= 0 && amt.cent >= 0 {
-		return true
-	}
-	return false
-}
 type stock struct {
 	Country string `json:country`
-	Symbol string `json:symbol`
-	Price string `json:price`
+	Symbol 	string `json:symbol`
+	Price 	string `json:price`
 }
+
 type respBody struct {
 	Response []stock `json:response`
+	Code     int     `json:code`
+	Msg      string  `json:msg`
 }
 
-func getStock(ticker string, wg *sync.WaitGroup, c chan<- amount) {
+func getStockTotal(ticker string, quantity int, wg *sync.WaitGroup, c chan<- amount) {
 	defer wg.Done()
-	fmt.Println("checking price " + ticker)
 
-	// get stock price for the day
 	url := fmt.Sprintf("https://fcsapi.com/api-v2/stock/latest?symbol=%s&access_key=%s",ticker, "JWtSLcs045NL95a6GhHs6oYvt46dzbq3EBsPQXIiA8bLrBfUwC")
 	resp, err := http.Get(url)
 	if err != nil {
-		fmt.Println("Error reading stock", err)
+		log.Fatalln(err)
 	}
 	defer resp.Body.Close()
 
 	body, err := ioutil.ReadAll(resp.Body)
+	if err !=nil {
+		log.Fatalln(err)
+	}
 	respBody1 := respBody{}
 	jsonErr := json.Unmarshal(body, &respBody1)
-
 	if jsonErr != nil {
-		log.Fatal(jsonErr)
-		c <- amount{0, 0} // fixme
+		log.Fatalln(jsonErr)
+	} else if respBody1.Code != 200 {
+		log.Printf("Error fetching stock for %s statusCode: %d errorMsg: %s\n", ticker, respBody1.Code, respBody1.Msg)
 	}
 
 	for _, st := range respBody1.Response {
 		if st.Country == "united-states" {
-			fmt.Println(st.Country)
-			fmt.Println(st.Symbol)
-			fmt.Println(st.Price)
+			log.Printf("%s is at %s today\n", st.Symbol, st.Price)
 			amtArr := strings.Split(st.Price, ".")
 			dollar, err := strconv.Atoi(amtArr[0])
 			cent, err := strconv.Atoi(amtArr[1])
 			if err != nil {
 				log.Fatal(err)
-				c <- amount{0, 0} // fixme
+				c <- amount{0, 0}
 			}
+			cent = cent * quantity
+			dollar = dollar * quantity
 			c <- amount{dollar, cent}
 		}
 	}
 }
 
-func getTodayGainLoss(args[] string) (*amount, error) {
+func printGrandTotal(args[] string) {
 	var wg sync.WaitGroup
 	prices := make(chan amount, len(args)/2)
 
 	for i := 0; i < len(args); i = i+2 {
 		wg.Add(1)
-		go getStock(args[i], &wg, prices)
+		j, _ := strconv.Atoi(args[i+1])
+		go getStockTotal(args[i], j, &wg, prices)
 	}
 
 	wg.Wait()
@@ -133,5 +123,7 @@ func getTodayGainLoss(args[] string) (*amount, error) {
 		runningTotal.dollar += amt.dollar
 		runningTotal.cent += amt.cent
 	}
-	return &runningTotal, nil
+	runningTotal.dollar = runningTotal.dollar + (runningTotal.cent / 100)
+	runningTotal.cent = runningTotal.cent % 100
+	log.Printf("Total assets as of today: %d.%d\n", runningTotal.dollar, runningTotal.cent)
 }
