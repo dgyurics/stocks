@@ -2,7 +2,6 @@ package main
 
 import (
 	"encoding/json"
-	"errors"
 	"fmt"
 	"io/ioutil"
 	"log"
@@ -20,32 +19,28 @@ type amount struct {
 
 func main() {
 	log.Println("Analyzing stocks...")
-
-	if err := verifyArgs(os.Args[1:]); err != nil {
-		log.Println("invalid input:", err)
-	}
-
+	validateArgs(os.Args[1:])
 	printGrandTotal(os.Args[1:])
 }
 
-func verifyArgs(args[] string) error {
+/* Logs and throws os.Exit(1) if validation fails */
+func validateArgs(args[] string) {
 	if len(args) % 2 != 0 {
-		return errors.New("expected space separated list of {ticker symbol} {count}")
+		log.Fatalln("expected space separated list of ticker and count")
 	}
 	for i := 0; i < len(args); i = i+2 {
-		if !IsLetter(args[i]) {
-			return errors.New("ticker symbol must only contain letters but was " + args[i])
+		if !isLetters(args[i]) {
+			log.Fatalln("ticker symbol must only contain letters but was " + args[i])
 		}
 	}
 	for i := 1; i < len(args); i = i+2 {
 		if _, err := strconv.Atoi(args[i]); err != nil {
-			return errors.New("stock count must be integer but was " + args[i])
+			log.Fatalln("stock count must be integer but was " + args[i])
 		}
 	}
-	return nil
 }
 
-func IsLetter(s string) bool {
+func isLetters(s string) bool {
 	for _, r := range s {
 		if !unicode.IsLetter(r) {
 			return false
@@ -71,27 +66,38 @@ func getStockTotal(ticker string, quantity int, wg *sync.WaitGroup, c chan<- amo
 
 	url := fmt.Sprintf("https://fcsapi.com/api-v2/stock/latest?symbol=%s&access_key=%s",ticker, "JWtSLcs045NL95a6GhHs6oYvt46dzbq3EBsPQXIiA8bLrBfUwC")
 	resp, err := http.Get(url)
+
 	if err != nil {
 		log.Fatalln(err)
 	}
-	defer resp.Body.Close()
 
+	defer resp.Body.Close()
 	body, err := ioutil.ReadAll(resp.Body)
-	if err !=nil {
+
+	if err != nil {
 		log.Fatalln(err)
 	}
+
 	respBody1 := respBody{}
 	jsonErr := json.Unmarshal(body, &respBody1)
+
 	if jsonErr != nil {
-		log.Fatalln(jsonErr)
-	} else if respBody1.Code != 200 {
-		log.Printf("Error fetching stock for %s statusCode: %d errorMsg: %s\n", ticker, respBody1.Code, respBody1.Msg)
+		log.Printf("Error unmarshaling response body for stock %s", ticker)
+		return
 	}
 
-	for _, st := range respBody1.Response {
-		if st.Country == "united-states" {
-			log.Printf("%s is at %s today\n", st.Symbol, st.Price)
-			amtArr := strings.Split(st.Price, ".")
+	if respBody1.Code != 200 {
+		log.Printf("Error fetching stock for %s\n", ticker)
+		log.Printf("StatusCode: %d ErrorMsg: %s\n", respBody1.Code, respBody1.Msg)
+		return
+	}
+
+	const countryUnitedStates = "united-states"
+
+	for _, stockEntry := range respBody1.Response {
+		if stockEntry.Country == countryUnitedStates {
+			log.Printf("%s is at %s today\n", stockEntry.Symbol, stockEntry.Price)
+			amtArr := strings.Split(stockEntry.Price, ".")
 			dollar, err := strconv.Atoi(amtArr[0])
 			cent, err := strconv.Atoi(amtArr[1])
 			if err != nil {
