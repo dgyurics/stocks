@@ -23,7 +23,6 @@ func main() {
 	printGrandTotal(os.Args[1:])
 }
 
-/* Logs and throws os.Exit(1) if validation fails */
 func validateArgs(args[] string) {
 	if len(args) % 2 != 0 {
 		log.Fatalln("expected space separated list of ticker and count")
@@ -61,10 +60,11 @@ type respBody struct {
 	Msg      string  `json:msg`
 }
 
-func getStockTotal(ticker string, quantity int, wg *sync.WaitGroup, c chan<- amount) {
+func getStockTotal(ticker string, quantity int, wg *sync.WaitGroup, c chan<- *amount) {
 	defer wg.Done()
 
-	url := fmt.Sprintf("https://fcsapi.com/api-v2/stock/latest?symbol=%s&access_key=%s",ticker, "JWtSLcs045NL95a6GhHs6oYvt46dzbq3EBsPQXIiA8bLrBfUwC")
+	const stockUri = "https://fcsapi.com/api-v2/stock/latest?symbol=%s&access_key=%s"
+	url := fmt.Sprintf(stockUri, ticker, "JWtSLcs045NL95a6GhHs6oYvt46dzbq3EBsPQXIiA8bLrBfUwC")
 	resp, err := http.Get(url)
 
 	if err != nil {
@@ -93,27 +93,45 @@ func getStockTotal(ticker string, quantity int, wg *sync.WaitGroup, c chan<- amo
 	}
 
 	const countryUnitedStates = "united-states"
-
 	for _, stockEntry := range respBody1.Response {
 		if stockEntry.Country == countryUnitedStates {
 			log.Printf("%s is at %s today\n", stockEntry.Symbol, stockEntry.Price)
-			amtArr := strings.Split(stockEntry.Price, ".")
-			dollar, err := strconv.Atoi(amtArr[0])
-			cent, err := strconv.Atoi(amtArr[1])
+			amt, err := strToAmt(stockEntry.Price)
 			if err != nil {
-				log.Fatal(err)
-				c <- amount{0, 0}
+				log.Printf("Error converting %s stock price %s to type amount", ticker, stockEntry.Price)
+				return
 			}
-			cent = cent * quantity
-			dollar = dollar * quantity
-			c <- amount{dollar, cent}
+			c <- amt.multiply(quantity)
 		}
 	}
 }
 
+// FIXME integer overflow
+
+func (amt amount) add(operand amount) *amount {
+	result := amount{amt.dollar + operand.dollar, amt.cent + operand.cent}
+	result.dollar = result.dollar + result.cent / 100
+	result.cent = result.cent % 100
+	return &result
+}
+
+func (amt amount) multiply(operand int) *amount {
+	result := amount{amt.dollar * operand, amt.cent * operand}
+	result.dollar = result.dollar + result.cent / 100
+	result.cent = result.cent % 100
+	return &result
+}
+
+func strToAmt(amt string) (*amount, error) {
+	amtArr := strings.Split(amt, ".")
+	dollar, err := strconv.Atoi(amtArr[0])
+	cent, err := strconv.Atoi(amtArr[1])
+	return &amount{dollar, cent}, err
+}
+
 func printGrandTotal(args[] string) {
 	var wg sync.WaitGroup
-	prices := make(chan amount, len(args)/2)
+	prices := make(chan *amount, len(args)/2)
 
 	for i := 0; i < len(args); i = i+2 {
 		wg.Add(1)
@@ -126,10 +144,7 @@ func printGrandTotal(args[] string) {
 
 	runningTotal := amount{0, 0}
 	for amt := range prices {
-		runningTotal.dollar += amt.dollar
-		runningTotal.cent += amt.cent
+		runningTotal = *runningTotal.add(*amt)
 	}
-	runningTotal.dollar = runningTotal.dollar + (runningTotal.cent / 100)
-	runningTotal.cent = runningTotal.cent % 100
 	log.Printf("Total assets as of today: %d.%d\n", runningTotal.dollar, runningTotal.cent)
 }
